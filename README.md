@@ -12,7 +12,7 @@ npm install
 npm run dev
 ```
 
-By default the app talks to a local Flask backend at `http://localhost:5000/api`. Without a
+By default the app talks to a local Flask backend at `http://localhost:5001/api`. Without a
 backend running, it falls back to demo mode (in-memory data, no persistence). To point at a
 different backend, set `window.BOOXXED_API_URL` before the app mounts.
 

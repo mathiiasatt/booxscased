@@ -50,7 +50,7 @@ function inferCountry(olBook) {
 // app mounts (e.g. a <script> tag in index.html) or edit the constant below.
 // NOTE: backend connection only works when running locally (Vite) — the Claude.ai
 // preview sandbox blocks network calls, where the app falls back to demo mode.
-const API_BASE = (typeof window !== "undefined" && window.BOOXXED_API_URL) || "http://localhost:5000/api";
+const API_BASE = (typeof window !== "undefined" && window.BOOXXED_API_URL) || "http://localhost:5001/api";
 
 let _token = null;
 try { _token = window.localStorage.getItem("booxxed_token"); } catch {}
