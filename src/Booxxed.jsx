@@ -27,6 +27,11 @@ const INITIAL_LOGS = [
 ];
 const INITIAL_FAVS = { Africa:"OL16805415W", Americas:null, Asia:"OL17762217W", Europe:"OL20150260W", Oceania:null };
 
+// Every user always has this shelf; it mirrors the full reading log and the two
+// other slots are free for hand-picked, customisable shelves (3 max in total).
+const DEFAULT_SHELVES = [{ id:"all", name:"All my books", color:null, isDefault:true, bookIds:[] }];
+const MAX_SHELVES = 3;
+
 const TAG_SUGGESTIONS = ["literary fiction","coming of age","magical realism","diaspora","historical","debut","short stories","unreliable narrator","slow burn","family saga","colonialism","feminism","queerness","war","immigration","mythology","satire","thriller","romance","poetry"];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -92,6 +97,11 @@ const api = {
   getFavourites:()                    => apiFetch("/favourites"),
   setFavourite:(continent,olKey)      => apiFetch(`/favourites/${continent}`,{method:"PUT",body:{ol_key:olKey}}),
   clearFavourite:(continent)          => apiFetch(`/favourites/${continent}`,{method:"DELETE"}),
+  getShelves:   ()                    => apiFetch("/shelves"),
+  createShelf:  (name,color)          => apiFetch("/shelves",{method:"POST",body:{name,color}}),
+  updateShelf:  (id,patch)            => apiFetch(`/shelves/${id}`,{method:"PATCH",body:patch}),
+  deleteShelf:  (id)                  => apiFetch(`/shelves/${id}`,{method:"DELETE"}),
+  setShelfBooks:(id,ol_keys)          => apiFetch(`/shelves/${id}/books`,{method:"PUT",body:{ol_keys}}),
 };
 
 // ─── Backend → frontend shape normalizers ─────────────────────────────────────
@@ -102,6 +112,10 @@ function normalizeLog(l) {
     rating:l.rating, tags:l.tags||[], comment:l.comment||"",
     date:(l.logged_at||"").split("T")[0],
   };
+}
+
+function normalizeShelf(s) {
+  return { id:s.id, name:s.name, color:s.color||null, isDefault:s.is_default, bookIds:s.ol_keys||[] };
 }
 
 // Poll: backend returns {characters:[{id,name,votes}], user_vote:<charId>, total_votes}
@@ -686,14 +700,118 @@ function BookDetailPanel({ log, onClose, onEdit }) {
   );
 }
 
-function Bookshelf({ logs, onEditLog }) {
+const WOOD_TINTS = ["#a97e4c","#8a5a33","#b98d5a","#6e4a2e","#5d6b5a","#4a5a6e"];
+
+// Editor for creating / customising a shelf: name, wood colour, and (for custom
+// shelves) hand-picking which logged books sit on it.
+function ShelfEditor({ mode, shelf, logs, onClose, onCreate, onUpdate, onDelete, onSetBooks }) {
+  const isNew = mode==="new";
+  const [name,setName]=useState(isNew?"":shelf.name);
+  const [color,setColor]=useState(isNew?WOOD_TINTS[0]:(shelf.color||WOOD_TINTS[0]));
+  const [picked,setPicked]=useState(new Set(isNew?[]:shelf.bookIds));
+  const [busy,setBusy]=useState(false);
+  const isDefault = !isNew && shelf.isDefault;
+
+  async function save() {
+    const n=name.trim();
+    if (!n) return;
+    setBusy(true);
+    try {
+      if (isNew) {
+        const created = await onCreate(n, color);
+        if (created && picked.size) await onSetBooks(created.id, [...picked]);
+      } else {
+        await onUpdate(shelf.id, { name:n, color });
+        if (!isDefault) await onSetBooks(shelf.id, [...picked]);
+      }
+      onClose();
+    } finally { setBusy(false); }
+  }
+
+  function toggle(bookId) {
+    setPicked(prev=>{ const s=new Set(prev); s.has(bookId)?s.delete(bookId):s.add(bookId); return s; });
+  }
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(20,12,6,0.7)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+      <div style={{background:"#faf5ef",borderRadius:14,width:"100%",maxWidth:460,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:"18px 24px",borderBottom:"1px solid #e0d4c4",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <h2 style={{margin:0,fontSize:18,fontFamily:"Georgia,serif",color:"#1e1208"}}>{isNew?"New shelf":"Customise shelf"}</h2>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#7a5c40"}}>×</button>
+        </div>
+        <div style={{padding:24}}>
+          <label style={{fontSize:13,fontWeight:600,color:"#5a3e2b",display:"block",marginBottom:6}}>Shelf name</label>
+          <input value={name} onChange={e=>setName(e.target.value)} maxLength={60} placeholder="e.g. Favourites, To lend, 2026 reads…"
+            style={{width:"100%",padding:"10px 12px",border:"1px solid #d0c0a8",borderRadius:8,fontSize:14,fontFamily:"Georgia,serif",background:"#fff",boxSizing:"border-box",outline:"none",marginBottom:18}}/>
+
+          <label style={{fontSize:13,fontWeight:600,color:"#5a3e2b",display:"block",marginBottom:6}}>Wood colour</label>
+          <div style={{display:"flex",gap:8,marginBottom:18}}>
+            {WOOD_TINTS.map(c=>(
+              <button key={c} onClick={()=>setColor(c)} title={c}
+                style={{width:34,height:34,borderRadius:8,background:c,cursor:"pointer",
+                  border:color===c?"3px solid #c8802a":"2px solid #e0d4c4"}}/>
+            ))}
+          </div>
+
+          {isDefault ? (
+            <p style={{margin:"0 0 18px",fontSize:13,color:"#9a7c60",background:"#fdf6ee",border:"1px solid #e8dfd3",borderRadius:8,padding:"10px 12px"}}>
+              📚 This shelf always contains every book you've read — it fills itself.
+            </p>
+          ) : (
+            <>
+              <label style={{fontSize:13,fontWeight:600,color:"#5a3e2b",display:"block",marginBottom:6}}>
+                Books on this shelf <span style={{fontWeight:400,color:"#9a7c60"}}>({picked.size} selected)</span>
+              </label>
+              {logs.length===0&&<p style={{fontSize:13,color:"#9a7c60"}}>Log books first — then place them here.</p>}
+              <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:230,overflowY:"auto",marginBottom:18}}>
+                {logs.map(l=>(
+                  <label key={l.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 10px",background:"#fff",border:`1px solid ${picked.has(l.bookId)?"#c8802a":"#e0d4c4"}`,borderRadius:8,cursor:"pointer"}}>
+                    <input type="checkbox" checked={picked.has(l.bookId)} onChange={()=>toggle(l.bookId)} style={{accentColor:"#c8802a"}}/>
+                    <BookCover coverId={l.coverId} title={l.title} size={26}/>
+                    <span style={{fontSize:13,color:"#1e1208",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.title}</span>
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+
+          <div style={{display:"flex",gap:10,alignItems:"center"}}>
+            {!isNew&&!isDefault&&(
+              <button onClick={()=>{ if(window.confirm(`Delete shelf "${shelf.name}"? The books stay in your log.`)) { onDelete(shelf.id); onClose(); } }}
+                style={{padding:"10px 14px",background:"none",border:"1px solid #c99",color:"#a33",borderRadius:8,fontSize:13,cursor:"pointer",fontFamily:"Georgia,serif"}}>
+                Delete
+              </button>
+            )}
+            <div style={{flex:1}}/>
+            <button onClick={onClose} style={{padding:"10px 16px",background:"none",border:"1px solid #d0c0a8",color:"#5a3e2b",borderRadius:8,fontSize:13,cursor:"pointer",fontFamily:"Georgia,serif"}}>Cancel</button>
+            <button onClick={save} disabled={busy||!name.trim()}
+              style={{padding:"10px 20px",background:"#c8802a",border:"none",color:"#fff",borderRadius:8,fontSize:13,fontWeight:600,cursor:busy?"wait":"pointer",fontFamily:"Georgia,serif",opacity:(busy||!name.trim())?0.6:1}}>
+              {isNew?"Create shelf":"Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Bookshelf({ logs, shelves=[], onCreateShelf, onUpdateShelf, onDeleteShelf, onSetShelfBooks, onEditLog }) {
   const [selected,setSelected]=useState(null);
   const [sortBy,setSortBy]=useState("recent");
   const [webglError,setWebglError]=useState(false);
+  const [activeId,setActiveId]=useState(shelves[0]?.id);
+  const [editor,setEditor]=useState(null);        // null | "new" | "edit"
   const mountRef=useRef(null);
   const S=useRef(null);   // three.js scene state (renderer, meshes, targets...)
 
-  const sorted = [...logs].sort((a,b)=>{
+  const active = shelves.find(s=>s.id===activeId) || shelves[0];
+  useEffect(()=>{ if (!shelves.find(s=>s.id===activeId)) setActiveId(shelves[0]?.id); },[shelves]);   // eslint-disable-line
+
+  // default shelf = every logged book; custom shelves = hand-picked
+  const shelfLogs = (!active||active.isDefault) ? logs : logs.filter(l=>active.bookIds.includes(l.bookId));
+  const woodColor = active?.color || "#a97e4c";
+
+  const sorted = [...shelfLogs].sort((a,b)=>{
     if (sortBy==="title")     return a.title.localeCompare(b.title);
     if (sortBy==="rating")    return b.rating-a.rating;
     if (sortBy==="author")    return (a.author||"").localeCompare(b.author||"");
@@ -867,7 +985,7 @@ function Bookshelf({ logs, onEditLog }) {
     const st=S.current; if(!st) return;
 
     // create missing meshes
-    for (const log of logs){
+    for (const log of shelfLogs){
       if (st.books.has(log.id)) continue;
       const h=hashOf(log.bookId||log.title);
       const height=1.45+(h%46)/100, thick=0.26+(h%15)/100, depth=1.02;
@@ -890,9 +1008,9 @@ function Bookshelf({ logs, onEditLog }) {
           undefined, ()=>{});
       }
     }
-    // remove deleted logs
+    // remove books that left this shelf (or were deleted)
     for (const [id,mesh] of st.books){
-      if (!logs.find(l=>l.id===id)){ st.scene.remove(mesh); st.books.delete(id); }
+      if (!shelfLogs.find(l=>l.id===id)){ st.scene.remove(mesh); st.books.delete(id); }
     }
 
     // layout: rows of accumulated spine thickness, centred
@@ -923,11 +1041,11 @@ function Bookshelf({ logs, onEditLog }) {
     for (const b of st.boards) st.scene.remove(b);
     st.boards=rows.map((_,ri)=>{
       const b=new THREE.Mesh(new THREE.BoxGeometry(10.4,0.14,1.5),
-        new THREE.MeshStandardMaterial({color:"#a97e4c",roughness:0.75}));
+        new THREE.MeshStandardMaterial({color:woodColor,roughness:0.75}));
       b.position.set(0,ROW_Y0-ri*ROW_DY,0);
       st.scene.add(b); return b;
     });
-  },[logs,sortBy]);   // re-layout when books or sort change (books glide to new slots)
+  },[logs,sortBy,activeId,shelves]);   // re-layout on book/sort/shelf change (books glide to new slots)
 
   // ── select / put back ──
   function selectBook(log){
@@ -952,10 +1070,17 @@ function Bookshelf({ logs, onEditLog }) {
         onClose={()=>{ setSelected(null); putBack(); }}
         onEdit={onEditLog?(l)=>{ setSelected(null); putBack(); onEditLog(l); }:null}/>}
 
-      <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:12}}>
-        <h2 style={{margin:0,fontSize:22,fontFamily:"Georgia,serif",color:"#1e1208"}}>My bookshelf</h2>
+      {editor&&(
+        <ShelfEditor mode={editor} shelf={active} logs={logs}
+          onClose={()=>setEditor(null)}
+          onCreate={async (n,c)=>{ const s=await onCreateShelf(n,c); if(s) setActiveId(s.id); return s; }}
+          onUpdate={onUpdateShelf} onDelete={onDeleteShelf} onSetBooks={onSetShelfBooks}/>
+      )}
+
+      <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:12}}>
+        <h2 style={{margin:0,fontSize:22,fontFamily:"Georgia,serif",color:"#1e1208"}}>My bookshelves</h2>
         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-          <span style={{fontSize:13,color:"#9a7c60"}}>{logs.length} book{logs.length!==1?"s":""} · Sort</span>
+          <span style={{fontSize:13,color:"#9a7c60"}}>{shelfLogs.length} book{shelfLogs.length!==1?"s":""} · Sort</span>
           {[["recent","Recent"],["title","Title"],["author","Author"],["rating","Rating"],["continent","Continent"]].map(([v,label])=>(
             <button key={v} onClick={()=>setSortBy(v)}
               style={{padding:"4px 10px",borderRadius:14,border:`1px solid ${sortBy===v?"#c8802a":"#d0c0a8"}`,background:sortBy===v?"#c8802a":"transparent",color:sortBy===v?"#fff":"#7a5c40",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif"}}>
@@ -965,14 +1090,47 @@ function Bookshelf({ logs, onEditLog }) {
         </div>
       </div>
 
+      {/* Shelf tabs: default (all read books) + up to 2 custom shelves */}
+      <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+        {shelves.map(s=>{
+          const isActive=active&&s.id===active.id;
+          const count=s.isDefault?logs.length:s.bookIds.length;
+          return (
+            <button key={s.id} onClick={()=>setActiveId(s.id)}
+              style={{display:"inline-flex",alignItems:"center",gap:7,padding:"7px 14px",borderRadius:8,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:13,
+                border:`1px solid ${isActive?"#c8802a":"#d0c0a8"}`,background:isActive?"#faeeda":"#fff",color:isActive?"#8B4513":"#7a5c40",fontWeight:isActive?600:400}}>
+              <span style={{width:10,height:10,borderRadius:3,background:s.color||"#a97e4c",border:"1px solid rgba(0,0,0,0.15)"}}/>
+              {s.isDefault?"📚 ":""}{s.name}
+              <span style={{fontSize:11,color:"#b09070"}}>({count})</span>
+            </button>
+          );
+        })}
+        {shelves.length<3&&(
+          <button onClick={()=>setEditor("new")}
+            style={{padding:"7px 14px",borderRadius:8,border:"1px dashed #c0a880",background:"#faf0e4",color:"#7a5c40",fontSize:13,cursor:"pointer",fontFamily:"Georgia,serif"}}>
+            + New shelf
+          </button>
+        )}
+        {active&&(
+          <button onClick={()=>setEditor("edit")}
+            style={{padding:"7px 14px",borderRadius:8,border:"1px solid #d0c0a8",background:"none",color:"#7a5c40",fontSize:13,cursor:"pointer",fontFamily:"Georgia,serif"}}>
+            ✎ Customise
+          </button>
+        )}
+      </div>
+
       {webglError&&(
         <p style={{color:"#c0392b",textAlign:"center",padding:"40px 0"}}>WebGL is unavailable in this browser — the 3D shelf can't render here.</p>
       )}
 
       <div ref={mountRef} style={{width:"100%",borderRadius:14,overflow:"hidden",border:"1px solid #b89468",minHeight:520,background:"#5c452e"}}/>
 
-      {logs.length===0&&!webglError&&(
-        <p style={{color:"#9a7c60",textAlign:"center",margin:"14px 0 0"}}>Your shelves are empty — log a book to place it in the closet.</p>
+      {shelfLogs.length===0&&!webglError&&(
+        <p style={{color:"#9a7c60",textAlign:"center",margin:"14px 0 0"}}>
+          {active&&!active.isDefault
+            ? <>This shelf is empty — click <b>✎ Customise</b> to place some of your books on it.</>
+            : <>Your shelves are empty — log a book to place it in the closet.</>}
+        </p>
       )}
 
       <div style={{display:"flex",gap:14,marginTop:12,flexWrap:"wrap",justifyContent:"center"}}>
@@ -1647,10 +1805,20 @@ export default function App() {
   const [logs,setLogs]=useState(INITIAL_LOGS);
   const [polls,setPolls]=useState(INITIAL_POLLS);
   const [favs,setFavs]=useState(INITIAL_FAVS);
+  const [shelves,setShelves]=useState(()=>{
+    try { const s=JSON.parse(window.localStorage.getItem("booxxed_demo_shelves"));
+          if (Array.isArray(s)&&s.some(x=>x.isDefault)) return s; } catch {}
+    return DEFAULT_SHELVES;
+  });
   const [logModal,setLogModal]=useState(false);
   const [editLog,setEditLog]=useState(null);
 
   const connected = !!user && !demoMode;
+
+  // Demo mode: custom shelves survive reloads via localStorage
+  useEffect(()=>{
+    if (!connected) { try { window.localStorage.setItem("booxxed_demo_shelves", JSON.stringify(shelves)); } catch {} }
+  },[shelves,connected]);
 
   // ── boot: if a token is stored, restore the session and load data ──────────
   useEffect(()=>{
@@ -1666,9 +1834,10 @@ export default function App() {
   },[]);
 
   async function loadAll() {
-    const [rawLogs, rawFavs] = await Promise.all([api.getLogs(), api.getFavourites()]);
+    const [rawLogs, rawFavs, rawShelves] = await Promise.all([api.getLogs(), api.getFavourites(), api.getShelves()]);
     const normLogs = rawLogs.map(normalizeLog);
     setLogs(normLogs);
+    setShelves(rawShelves.map(normalizeShelf));
     setFavs({
       Africa:rawFavs.Africa?.book.ol_key||null,   Americas:rawFavs.Americas?.book.ol_key||null,
       Asia:rawFavs.Asia?.book.ol_key||null,       Europe:rawFavs.Europe?.book.ol_key||null,
@@ -1685,12 +1854,52 @@ export default function App() {
   async function handleAuthed(u) {
     setUser(u); setDemoMode(false);
     setLogs([]); setPolls({}); setFavs({Africa:null,Americas:null,Asia:null,Europe:null,Oceania:null});
+    setShelves(DEFAULT_SHELVES);
     try { await loadAll(); } catch(e){ console.warn("initial load failed:", e.message); }
   }
 
   function handleLogout() {
     setToken(null); setUser(null); setDemoMode(false);
     setLogs(INITIAL_LOGS); setPolls(INITIAL_POLLS); setFavs(INITIAL_FAVS);
+    setShelves(DEFAULT_SHELVES);
+  }
+
+  // ── Bookshelves (max 3, one default = all read books) ──────────────────────
+  async function handleShelfCreate(name, color) {
+    if (shelves.length >= MAX_SHELVES) { alert(`You can have at most ${MAX_SHELVES} shelves.`); return null; }
+    if (connected) {
+      try { const s = await api.createShelf(name, color); const n = normalizeShelf(s);
+            setShelves(p=>[...p,n]); return n; }
+      catch(e){ alert("Could not create shelf: "+e.message); return null; }
+    }
+    const n = { id:Date.now(), name, color:color||null, isDefault:false, bookIds:[] };
+    setShelves(p=>[...p,n]); return n;
+  }
+
+  async function handleShelfUpdate(id, patch) {
+    if (connected) {
+      try { const s = await api.updateShelf(id, patch);
+            setShelves(p=>p.map(x=>x.id===id?normalizeShelf(s):x)); return; }
+      catch(e){ alert("Could not update shelf: "+e.message); return; }
+    }
+    setShelves(p=>p.map(x=>x.id===id?{...x,...patch}:x));
+  }
+
+  async function handleShelfDelete(id) {
+    if (connected) {
+      try { await api.deleteShelf(id); }
+      catch(e){ alert("Could not delete shelf: "+e.message); return; }
+    }
+    setShelves(p=>p.filter(x=>x.id!==id||x.isDefault));
+  }
+
+  async function handleShelfBooks(id, bookIds) {
+    if (connected) {
+      try { const s = await api.setShelfBooks(id, bookIds);
+            setShelves(p=>p.map(x=>x.id===id?normalizeShelf(s):x)); return; }
+      catch(e){ alert("Could not update shelf books: "+e.message); return; }
+    }
+    setShelves(p=>p.map(x=>x.id===id?{...x,bookIds}:x));
   }
 
   // ── Update / delete an existing log ────────────────────────────────────────
@@ -1864,7 +2073,11 @@ export default function App() {
             </div>
           </>
         )}
-        {view==="shelf"&&<Bookshelf logs={logs} onEditLog={setEditLog}/>}
+        {view==="shelf"&&(
+          <Bookshelf logs={logs} shelves={shelves} onEditLog={setEditLog}
+            onCreateShelf={handleShelfCreate} onUpdateShelf={handleShelfUpdate}
+            onDeleteShelf={handleShelfDelete} onSetShelfBooks={handleShelfBooks}/>
+        )}
         {view==="map"&&<GlobeView logs={logs} onEditLog={setEditLog}/>}
       </div>
 

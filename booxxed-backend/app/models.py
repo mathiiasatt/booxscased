@@ -13,6 +13,8 @@ polls               — one global character poll per book
 poll_characters     — characters belonging to a poll
 poll_votes          — one vote per (user, poll)
 favourites          — user's 5-continent shelf (one row per continent slot)
+shelves             — up to 3 bookshelves per user (one default: all read books)
+shelf_books         — which logged books sit on which custom shelf
 """
 
 from datetime import datetime, timezone
@@ -52,6 +54,7 @@ class User(db.Model):
     logs         = db.relationship("Log",       back_populates="user", cascade="all, delete-orphan")
     favourites   = db.relationship("Favourite", back_populates="user", cascade="all, delete-orphan")
     poll_votes   = db.relationship("PollVote",  back_populates="user", cascade="all, delete-orphan")
+    shelves      = db.relationship("Shelf",     back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<User {self.username}>"
@@ -190,6 +193,52 @@ class PollVote(db.Model):
 
     def __repr__(self):
         return f"<PollVote user={self.user_id} poll={self.poll_id} char={self.character_id}>"
+
+
+# ── Bookshelves ───────────────────────────────────────────────────────────────
+
+class Shelf(db.Model):
+    """
+    A user can have at most 3 shelves (enforced in the route layer).
+    Exactly one per user is the default shelf: its contents are always
+    every book the user has logged (computed, never stored in shelf_books).
+    Custom shelves are filled by hand from the user's logged books.
+    """
+    __tablename__ = "shelves"
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "name", name="uq_user_shelf_name"),
+    )
+
+    id         = db.Column(db.Integer, primary_key=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name       = db.Column(db.String(60), nullable=False)
+    color      = db.Column(db.String(20), nullable=True)    # wood tint, hex e.g. "#a97e4c"
+    is_default = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+
+    user  = db.relationship("User", back_populates="shelves")
+    books = db.relationship("ShelfBook", back_populates="shelf", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<Shelf user={self.user_id} {self.name}{' (default)' if self.is_default else ''}>"
+
+
+class ShelfBook(db.Model):
+    """A book placed on a custom shelf. One row per (shelf, book)."""
+    __tablename__ = "shelf_books"
+    __table_args__ = (
+        db.UniqueConstraint("shelf_id", "book_id", name="uq_shelf_book"),
+    )
+
+    id       = db.Column(db.Integer, primary_key=True)
+    shelf_id = db.Column(db.Integer, db.ForeignKey("shelves.id", ondelete="CASCADE"), nullable=False, index=True)
+    book_id  = db.Column(db.Integer, db.ForeignKey("books.id",   ondelete="CASCADE"), nullable=False)
+
+    shelf = db.relationship("Shelf", back_populates="books")
+    book  = db.relationship("Book")
+
+    def __repr__(self):
+        return f"<ShelfBook shelf={self.shelf_id} book={self.book_id}>"
 
 
 # ── Favourites (5-continent shelf) ───────────────────────────────────────────

@@ -40,6 +40,7 @@ def create_app():
     from app.routes.polls import polls_bp
     from app.routes.favourites import favourites_bp
     from app.routes.profile import profile_bp
+    from app.routes.shelves import shelves_bp
 
     app.register_blueprint(auth_bp,        url_prefix="/api/auth")
     app.register_blueprint(books_bp,       url_prefix="/api/books")
@@ -47,6 +48,7 @@ def create_app():
     app.register_blueprint(polls_bp,       url_prefix="/api/polls")
     app.register_blueprint(favourites_bp,  url_prefix="/api/favourites")
     app.register_blueprint(profile_bp,     url_prefix="/api/profile")
+    app.register_blueprint(shelves_bp,     url_prefix="/api/shelves")
 
     # ── Health check ──────────────────────────────────────────────────────────
     @app.get("/api/health")
