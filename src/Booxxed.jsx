@@ -80,7 +80,7 @@ async function apiFetch(path, { method="GET", body } = {}) {
 
 const api = {
   register: (username,email,password) => apiFetch("/auth/register",{method:"POST",body:{username,email,password}}),
-  login:    (email,password)          => apiFetch("/auth/login",   {method:"POST",body:{email,password}}),
+  login:    (identifier,password)     => apiFetch("/auth/login",   {method:"POST",body:{identifier,password}}),
   me:       ()                        => apiFetch("/auth/me"),
   getLogs:  ()                        => apiFetch("/logs"),
   createLog:(payload)                 => apiFetch("/logs",{method:"POST",body:payload}),
@@ -1576,9 +1576,11 @@ function AuthScreen({ onAuthed, onSkip }) {
           </div>
 
           {mode==="register"&&(
-            <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Username" style={input}/>
+            <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Username (unique)" style={input}/>
           )}
-          <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email" type="email" style={input}/>
+          <input value={email} onChange={e=>setEmail(e.target.value)}
+            placeholder={mode==="register"?"Email":"Email or username"}
+            type={mode==="register"?"email":"text"} style={input}/>
           <input value={password} onChange={e=>setPassword(e.target.value)} placeholder="Password (8+ characters)" type="password" style={input}
             onKeyDown={e=>e.key==="Enter"&&submit()}/>
 

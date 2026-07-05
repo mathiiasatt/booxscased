@@ -33,10 +33,13 @@ def register():
 @auth_bp.post("/login")
 def login():
     data = request.get_json() or {}
-    email    = (data.get("email") or "").strip().lower()
-    password = data.get("password") or ""
+    # `identifier` accepts either the email or the username; `email` kept for compat
+    identifier = (data.get("identifier") or data.get("email") or "").strip()
+    password   = data.get("password") or ""
 
-    user = User.query.filter_by(email=email).first()
+    user = User.query.filter(
+        (User.email == identifier.lower()) | (User.username == identifier)
+    ).first()
     if not user or not bcrypt.checkpw(password.encode(), user.password_hash.encode()):
         return jsonify(error="invalid credentials"), 401
 
