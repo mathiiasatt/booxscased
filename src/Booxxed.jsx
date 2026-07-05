@@ -1270,8 +1270,8 @@ function useOpenLibrarySearch() {
       // lang=en + editions fields: Open Library returns, for each work, the best
       // matching ENGLISH edition in doc.editions.docs[0]. We prefer its title over
       // the raw work title (which may be in the original language, e.g. Russian).
-      const fields="key,title,author_name,first_publish_year,cover_i,subject_places,subject,place,language,editions,editions.title,editions.cover_i";
-      const res=await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&fields=${fields}&lang=en&limit=8`);
+      const fields="key,title,author_name,first_publish_year,cover_i,edition_count,subject_places,subject,place,language,editions,editions.title,editions.cover_i";
+      const res=await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&fields=${fields}&lang=en&limit=12`);
       const data=await res.json();
       const docs=(data.docs||[]).map(d=>{
         const en = d.editions?.docs?.[0];           // best English edition, if any
@@ -1281,7 +1281,20 @@ function useOpenLibrarySearch() {
           cover_i: en?.cover_i || d.cover_i,         // matching English cover too
         };
       });
-      setResults(docs);
+      // Open Library has duplicate work records for popular books (abridged
+      // versions, audio releases, unmerged duplicates). Collapse results that
+      // share the same author + normalised title, keeping the record with the
+      // most editions — that's almost always the canonical/original work.
+      const byKey=new Map();
+      for (const d of docs){
+        const k=(((d.author_name||[])[0]||"")+"|"+(d.title||"")).toLowerCase()
+          .replace(/&/g,"and").replace(/[^a-z0-9]+/g," ").trim();
+        const prev=byKey.get(k);
+        if (!prev) byKey.set(k,{...d,_pos:byKey.size});
+        else if ((d.edition_count||0)>(prev.edition_count||0)) byKey.set(k,{...d,_pos:prev._pos});
+      }
+      const deduped=[...byKey.values()].sort((a,b)=>a._pos-b._pos).slice(0,8);
+      setResults(deduped);
       setOffline(false);
     } catch(e){
       // Network blocked (e.g. artifact sandbox) → fall back to demo catalogue
