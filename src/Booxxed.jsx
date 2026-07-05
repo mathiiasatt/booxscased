@@ -15,17 +15,17 @@ const COUNTRY_TO_CONTINENT = {
 // This is the single source of truth for all character votes — shared across every
 // log/review of the same book, exactly like a real backend would store them.
 const INITIAL_POLLS = {
-  "OL82563W":    { characters:["Ifemelu","Obinze","Aunty Uju","Dike"],       votes:{Ifemelu:18,Obinze:9,"Aunty Uju":4,Dike:6},   userVote:null },
-  "OL17930368W": { characters:["Sunja","Isak","Noa","Mozasu"],               votes:{Sunja:31,Isak:8,Noa:14,Mozasu:11},            userVote:null },
-  "OL20490860W": { characters:["Marianne","Connell","Lorraine","Jamie"],     votes:{Marianne:22,Connell:19,Lorraine:8,Jamie:3},   userVote:null },
+  "OL16805415W":    { characters:["Ifemelu","Obinze","Aunty Uju","Dike"],       votes:{Ifemelu:18,Obinze:9,"Aunty Uju":4,Dike:6},   userVote:null },
+  "OL17762217W": { characters:["Sunja","Isak","Noa","Mozasu"],               votes:{Sunja:31,Isak:8,Noa:14,Mozasu:11},            userVote:null },
+  "OL20150260W": { characters:["Marianne","Connell","Lorraine","Jamie"],     votes:{Marianne:22,Connell:19,Lorraine:8,Jamie:3},   userVote:null },
 };
 
 const INITIAL_LOGS = [
-  { id:1, bookId:"OL82563W",    title:"Americanah",    author:"Chimamanda Ngozi Adichie", year:2013, coverId:8231856,  country:"Nigeria",      continent:"Africa",   rating:4.5, tags:["diaspora","identity","race"],             comment:"A sweeping and unflinching portrayal of identity across continents. Adichie's prose is electric — every sentence earns its place.", date:"2024-03-12" },
-  { id:2, bookId:"OL17930368W", title:"Pachinko",      author:"Min Jin Lee",              year:2017, coverId:8739161,  country:"South Korea",  continent:"Asia",     rating:5,   tags:["multigenerational","korea","immigration"], comment:"The most devastating and beautiful book I've read in years. Four generations of a Korean family — each chapter felt like a full novel.", date:"2024-01-28" },
-  { id:3, bookId:"OL20490860W", title:"Normal People", author:"Sally Rooney",             year:2018, coverId:9256298,  country:"Ireland",      continent:"Europe",   rating:3.5, tags:["ireland","class","relationships"],         comment:"Rooney is technically brilliant — the dialogue is flawless. I found Connell more compelling than Marianne, which I suspect is the point.", date:"2023-11-05" },
+  { id:1, bookId:"OL16805415W",    title:"Americanah",    author:"Chimamanda Ngozi Adichie", year:2013, coverId:8474037,  country:"Nigeria",      continent:"Africa",   rating:4.5, tags:["diaspora","identity","race"],             comment:"A sweeping and unflinching portrayal of identity across continents. Adichie's prose is electric — every sentence earns its place.", date:"2024-03-12" },
+  { id:2, bookId:"OL17762217W", title:"Pachinko",      author:"Min Jin Lee",              year:2017, coverId:8044605,  country:"South Korea",  continent:"Asia",     rating:5,   tags:["multigenerational","korea","immigration"], comment:"The most devastating and beautiful book I've read in years. Four generations of a Korean family — each chapter felt like a full novel.", date:"2024-01-28" },
+  { id:3, bookId:"OL20150260W", title:"Normal People", author:"Sally Rooney",             year:2018, coverId:8794265,  country:"Ireland",      continent:"Europe",   rating:3.5, tags:["ireland","class","relationships"],         comment:"Rooney is technically brilliant — the dialogue is flawless. I found Connell more compelling than Marianne, which I suspect is the point.", date:"2023-11-05" },
 ];
-const INITIAL_FAVS = { Africa:"OL82563W", Americas:null, Asia:"OL17930368W", Europe:"OL20490860W", Oceania:null };
+const INITIAL_FAVS = { Africa:"OL16805415W", Americas:null, Asia:"OL17762217W", Europe:"OL20150260W", Oceania:null };
 
 const TAG_SUGGESTIONS = ["literary fiction","coming of age","magical realism","diaspora","historical","debut","short stories","unreliable narrator","slow burn","family saga","colonialism","feminism","queerness","war","immigration","mythology","satire","thriller","romance","poetry"];
 
@@ -608,39 +608,76 @@ function CountryBookRow({ log, onEdit }) {
 // Spine hue = continent (the shelf doubles as a reading map); lightness varies per title.
 const SPINE_HUES = {Africa:[28,48],Americas:[160,38],Asia:[225,42],Europe:[318,36],Oceania:[182,38]};  // [hue,sat]
 
+// Large cover on the left, the reader's review + an Open Library summary on the
+// right. Designed to double as the "book page" when visiting someone else's
+// library in the future.
 function BookDetailPanel({ log, onClose, onEdit }) {
+  const [summary,setSummary]=useState(null);
+  const [summaryState,setSummaryState]=useState("loading");   // loading | ok | none
+
+  useEffect(()=>{
+    let cancelled=false;
+    (async ()=>{
+      setSummary(null); setSummaryState("loading");
+      try {
+        // logs store either "OL16805415W" or "/works/OL16805415W"
+        const key = log.bookId?.startsWith("/") ? log.bookId : `/works/${log.bookId}`;
+        const res = await fetch(`https://openlibrary.org${key}.json`);
+        if (!res.ok) throw new Error("no work");
+        const work = await res.json();
+        const d = work.description;
+        const text = typeof d === "string" ? d : d?.value;
+        if (!cancelled) {
+          if (text) { setSummary(text.trim()); setSummaryState("ok"); }
+          else setSummaryState("none");
+        }
+      } catch { if (!cancelled) setSummaryState("none"); }
+    })();
+    return ()=>{ cancelled=true; };
+  }, [log.bookId]);
+
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(20,12,6,0.7)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
-      <div style={{background:"#faf5ef",borderRadius:14,width:"100%",maxWidth:460,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
-        <div style={{display:"flex",gap:18,padding:24,borderBottom:"1px solid #e0d4c4"}}>
-          <BookCover coverId={log.coverId} title={log.title} size={110}/>
-          <div style={{flex:1,minWidth:0}}>
-            <h2 style={{margin:"0 0 4px",fontSize:20,fontFamily:"Georgia,serif",color:"#1e1208",lineHeight:1.25}}>{log.title}</h2>
-            <p style={{margin:"0 0 10px",fontSize:14,color:"#7a5c40"}}>{log.author}{log.year?` · ${log.year}`:""}</p>
-            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
-              <StarRating value={log.rating} readOnly size={18}/>
-              <span style={{fontSize:15,color:"#9a7c60"}}>{log.rating}</span>
+      <div style={{background:"#faf5ef",borderRadius:14,width:"100%",maxWidth:760,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",gap:28,padding:28,flexWrap:"wrap"}}>
+          {/* Big cover, side by side with everything else */}
+          <div style={{flex:"0 0 auto",margin:"0 auto"}}>
+            <BookCover coverId={log.coverId} title={log.title} size={190}/>
+          </div>
+
+          <div style={{flex:1,minWidth:260}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+              <h2 style={{margin:"0 0 4px",fontSize:24,fontFamily:"Georgia,serif",color:"#1e1208",lineHeight:1.25}}>{log.title}</h2>
+              <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#7a5c40",lineHeight:1}}>×</button>
             </div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <p style={{margin:"0 0 12px",fontSize:15,color:"#7a5c40"}}>{log.author}{log.year?` · ${log.year}`:""}</p>
+
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+              <StarRating value={log.rating} readOnly size={20}/>
+              <span style={{fontSize:16,color:"#9a7c60",fontWeight:600}}>{log.rating}</span>
+            </div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
               {log.continent&&<ContinentBadge continent={log.continent}/>}
               {log.country&&<span style={{fontSize:12,color:"#7a5c40",background:"#f5f0ea",padding:"2px 7px",borderRadius:10,border:"1px solid #e0d4c4"}}>📍 {log.country}</span>}
+              {log.tags&&log.tags.map(t=><Tag key={t} label={t}/>)}
             </div>
-          </div>
-        </div>
-        <div style={{padding:24}}>
-          {log.tags&&log.tags.length>0&&(
-            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
-              {log.tags.map(t=><Tag key={t} label={t}/>)}
-            </div>
-          )}
-          {log.comment
-            ? <p style={{margin:0,fontSize:14,color:"#3c2a1a",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{log.comment}</p>
-            : <p style={{margin:0,fontSize:14,color:"#9a7c60",fontStyle:"italic"}}>No written review.</p>}
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:18}}>
-            <p style={{margin:0,fontSize:11,color:"#b09070"}}>Logged {log.date}</p>
-            <div style={{display:"flex",gap:8}}>
-              {onEdit&&<button onClick={()=>onEdit(log)} style={{background:"none",border:"1px solid #d0c0a8",borderRadius:6,color:"#7a5c40",fontSize:13,padding:"7px 14px",cursor:"pointer",fontFamily:"Georgia,serif"}}>Edit review</button>}
-              <button onClick={onClose} style={{background:"#c8802a",border:"none",borderRadius:6,color:"#fff",fontSize:13,padding:"7px 16px",cursor:"pointer",fontFamily:"Georgia,serif"}}>Close</button>
+
+            <p style={{margin:"0 0 6px",fontSize:12,fontWeight:600,color:"#5a3e2b",textTransform:"uppercase",letterSpacing:"0.05em"}}>My review</p>
+            {log.comment
+              ? <p style={{margin:0,fontSize:14,color:"#3c2a1a",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{log.comment}</p>
+              : <p style={{margin:0,fontSize:14,color:"#9a7c60",fontStyle:"italic"}}>No written review.</p>}
+
+            <p style={{margin:"18px 0 6px",fontSize:12,fontWeight:600,color:"#5a3e2b",textTransform:"uppercase",letterSpacing:"0.05em"}}>About this book</p>
+            {summaryState==="loading"&&<p style={{margin:0,fontSize:13,color:"#9a7c60"}}>Loading summary from Open Library…</p>}
+            {summaryState==="none"&&<p style={{margin:0,fontSize:13,color:"#9a7c60",fontStyle:"italic"}}>No summary available on Open Library.</p>}
+            {summaryState==="ok"&&<p style={{margin:0,fontSize:14,color:"#4a3728",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{summary}</p>}
+
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:20}}>
+              <p style={{margin:0,fontSize:11,color:"#b09070"}}>Logged {log.date}</p>
+              <div style={{display:"flex",gap:8}}>
+                {onEdit&&<button onClick={()=>onEdit(log)} style={{background:"none",border:"1px solid #d0c0a8",borderRadius:6,color:"#7a5c40",fontSize:13,padding:"7px 14px",cursor:"pointer",fontFamily:"Georgia,serif"}}>Edit review</button>}
+                <button onClick={onClose} style={{background:"#c8802a",border:"none",borderRadius:6,color:"#fff",fontSize:13,padding:"7px 16px",cursor:"pointer",fontFamily:"Georgia,serif"}}>Close</button>
+              </div>
             </div>
           </div>
         </div>
@@ -727,25 +764,25 @@ function Bookshelf({ logs, onEditLog }) {
     mount.appendChild(renderer.domElement);
 
     const scene=new THREE.Scene();
-    scene.background=new THREE.Color("#160e07");
-    scene.fog=new THREE.Fog("#160e07",9,18);
+    scene.background=new THREE.Color("#5c452e");
+    scene.fog=new THREE.Fog("#5c452e",10,22);
 
     const camera=new THREE.PerspectiveCamera(45,W/H,0.1,60);
     camera.position.set(0,2.0,8.2);
 
-    // warm library lighting
-    scene.add(new THREE.AmbientLight(0xffe2c0,0.5));
-    const spot=new THREE.SpotLight(0xffc27a,1.15,30,Math.PI/3.4,0.45);
+    // warm, bright library lighting
+    scene.add(new THREE.AmbientLight(0xfff0dc,1.0));
+    const spot=new THREE.SpotLight(0xffd9a8,1.5,30,Math.PI/3.2,0.4);
     spot.position.set(0,7.5,7); scene.add(spot); scene.add(spot.target);
-    const fill=new THREE.PointLight(0xff9a50,0.35,20); fill.position.set(-4,2.5,4); scene.add(fill);
+    const fill=new THREE.PointLight(0xffc890,0.6,20); fill.position.set(-4,2.5,4); scene.add(fill);
 
     // room: back wall + floor + side panels
-    const wallMat=new THREE.MeshStandardMaterial({color:"#2b1a0e",roughness:0.95});
+    const wallMat=new THREE.MeshStandardMaterial({color:"#8a6a48",roughness:0.95});
     const back=new THREE.Mesh(new THREE.PlaneGeometry(26,14),wallMat); back.position.set(0,3.5,-1.35); scene.add(back);
-    const floor=new THREE.Mesh(new THREE.PlaneGeometry(26,20),new THREE.MeshStandardMaterial({color:"#1c1109",roughness:1}));
+    const floor=new THREE.Mesh(new THREE.PlaneGeometry(26,20),new THREE.MeshStandardMaterial({color:"#6e5236",roughness:1}));
     floor.rotation.x=-Math.PI/2; floor.position.y=-1.6; scene.add(floor);
     for (const sx of [-5.4,5.4]) {
-      const side=new THREE.Mesh(new THREE.BoxGeometry(0.35,11,2.6),new THREE.MeshStandardMaterial({color:"#3a2415",roughness:0.9}));
+      const side=new THREE.Mesh(new THREE.BoxGeometry(0.35,11,2.6),new THREE.MeshStandardMaterial({color:"#96703f",roughness:0.9}));
       side.position.set(sx,2.6,-0.1); scene.add(side);
     }
 
@@ -886,7 +923,7 @@ function Bookshelf({ logs, onEditLog }) {
     for (const b of st.boards) st.scene.remove(b);
     st.boards=rows.map((_,ri)=>{
       const b=new THREE.Mesh(new THREE.BoxGeometry(10.4,0.14,1.5),
-        new THREE.MeshStandardMaterial({color:"#6a4a2c",roughness:0.75}));
+        new THREE.MeshStandardMaterial({color:"#a97e4c",roughness:0.75}));
       b.position.set(0,ROW_Y0-ri*ROW_DY,0);
       st.scene.add(b); return b;
     });
@@ -932,7 +969,7 @@ function Bookshelf({ logs, onEditLog }) {
         <p style={{color:"#c0392b",textAlign:"center",padding:"40px 0"}}>WebGL is unavailable in this browser — the 3D shelf can't render here.</p>
       )}
 
-      <div ref={mountRef} style={{width:"100%",borderRadius:14,overflow:"hidden",border:"1px solid #3a2518",minHeight:520,background:"#160e07"}}/>
+      <div ref={mountRef} style={{width:"100%",borderRadius:14,overflow:"hidden",border:"1px solid #b89468",minHeight:520,background:"#5c452e"}}/>
 
       {logs.length===0&&!webglError&&(
         <p style={{color:"#9a7c60",textAlign:"center",margin:"14px 0 0"}}>Your shelves are empty — log a book to place it in the closet.</p>
@@ -1047,11 +1084,11 @@ function GlobeView({ logs, onEditLog }) {
 const DEMO_CATALOGUE = [
   { key:"/works/OL66554W",   title:"Pride and Prejudice",        author_name:["Jane Austen"],               first_publish_year:1813, cover_i:14348537, subject_places:["England"],
     _demo_people:["Elizabeth Bennet","Fitzwilliam Darcy","Jane Bennet","Charles Bingley","Lydia Bennet","George Wickham"] },
-  { key:"/works/OL82563W",   title:"Americanah",                 author_name:["Chimamanda Ngozi Adichie"],  first_publish_year:2013, cover_i:8231856,  subject_places:["Nigeria"],
+  { key:"/works/OL16805415W",   title:"Americanah",                 author_name:["Chimamanda Ngozi Adichie"],  first_publish_year:2013, cover_i:8474037,  subject_places:["Nigeria"],
     _demo_people:["Ifemelu","Obinze","Aunty Uju","Dike"] },
-  { key:"/works/OL17930368W",title:"Pachinko",                   author_name:["Min Jin Lee"],               first_publish_year:2017, cover_i:8739161,  subject_places:["Korea"],
+  { key:"/works/OL17762217W",title:"Pachinko",                   author_name:["Min Jin Lee"],               first_publish_year:2017, cover_i:8044605,  subject_places:["Korea"],
     _demo_people:["Sunja","Isak","Noa","Mozasu"] },
-  { key:"/works/OL20490860W",title:"Normal People",              author_name:["Sally Rooney"],              first_publish_year:2018, cover_i:9256298,  subject_places:["Ireland"],
+  { key:"/works/OL20150260W",title:"Normal People",              author_name:["Sally Rooney"],              first_publish_year:2018, cover_i:8794265,  subject_places:["Ireland"],
     _demo_people:["Marianne","Connell","Lorraine","Jamie"] },
   { key:"/works/OL27448W",   title:"The Lord of the Rings",      author_name:["J.R.R. Tolkien"],            first_publish_year:1954, cover_i:9255566,  subject_places:["England"],
     _demo_people:["Frodo Baggins","Samwise Gamgee","Gandalf","Aragorn","Legolas","Gollum"] },
