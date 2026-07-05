@@ -102,6 +102,8 @@ const api = {
   updateShelf:  (id,patch)            => apiFetch(`/shelves/${id}`,{method:"PATCH",body:patch}),
   deleteShelf:  (id)                  => apiFetch(`/shelves/${id}`,{method:"DELETE"}),
   setShelfBooks:(id,ol_keys)          => apiFetch(`/shelves/${id}/books`,{method:"PUT",body:{ol_keys}}),
+  searchUsers:  (q)                   => apiFetch(`/users?q=${encodeURIComponent(q)}`),
+  getUser:      (username)            => apiFetch(`/users/${encodeURIComponent(username)}`),
 };
 
 // ─── Backend → frontend shape normalizers ─────────────────────────────────────
@@ -795,7 +797,7 @@ function ShelfEditor({ mode, shelf, logs, onClose, onCreate, onUpdate, onDelete,
   );
 }
 
-function Bookshelf({ logs, shelves=[], onCreateShelf, onUpdateShelf, onDeleteShelf, onSetShelfBooks, onEditLog }) {
+function Bookshelf({ logs, shelves=[], onCreateShelf, onUpdateShelf, onDeleteShelf, onSetShelfBooks, onEditLog, readOnly=false, title="My bookshelves" }) {
   const [selected,setSelected]=useState(null);
   const [sortBy,setSortBy]=useState("recent");
   const [webglError,setWebglError]=useState(false);
@@ -1078,7 +1080,7 @@ function Bookshelf({ logs, shelves=[], onCreateShelf, onUpdateShelf, onDeleteShe
       )}
 
       <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:12}}>
-        <h2 style={{margin:0,fontSize:22,fontFamily:"Georgia,serif",color:"#1e1208"}}>My bookshelves</h2>
+        <h2 style={{margin:0,fontSize:22,fontFamily:"Georgia,serif",color:"#1e1208"}}>{title}</h2>
         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
           <span style={{fontSize:13,color:"#9a7c60"}}>{shelfLogs.length} book{shelfLogs.length!==1?"s":""} · Sort</span>
           {[["recent","Recent"],["title","Title"],["author","Author"],["rating","Rating"],["continent","Continent"]].map(([v,label])=>(
@@ -1105,13 +1107,13 @@ function Bookshelf({ logs, shelves=[], onCreateShelf, onUpdateShelf, onDeleteShe
             </button>
           );
         })}
-        {shelves.length<3&&(
+        {!readOnly&&shelves.length<3&&(
           <button onClick={()=>setEditor("new")}
             style={{padding:"7px 14px",borderRadius:8,border:"1px dashed #c0a880",background:"#faf0e4",color:"#7a5c40",fontSize:13,cursor:"pointer",fontFamily:"Georgia,serif"}}>
             + New shelf
           </button>
         )}
-        {active&&(
+        {!readOnly&&active&&(
           <button onClick={()=>setEditor("edit")}
             style={{padding:"7px 14px",borderRadius:8,border:"1px solid #d0c0a8",background:"none",color:"#7a5c40",fontSize:13,cursor:"pointer",fontFamily:"Georgia,serif"}}>
             ✎ Customise
@@ -1127,9 +1129,11 @@ function Bookshelf({ logs, shelves=[], onCreateShelf, onUpdateShelf, onDeleteShe
 
       {shelfLogs.length===0&&!webglError&&(
         <p style={{color:"#9a7c60",textAlign:"center",margin:"14px 0 0"}}>
-          {active&&!active.isDefault
-            ? <>This shelf is empty — click <b>✎ Customise</b> to place some of your books on it.</>
-            : <>Your shelves are empty — log a book to place it in the closet.</>}
+          {readOnly
+            ? <>This shelf is empty.</>
+            : active&&!active.isDefault
+              ? <>This shelf is empty — click <b>✎ Customise</b> to place some of your books on it.</>
+              : <>Your shelves are empty — log a book to place it in the closet.</>}
         </p>
       )}
 
@@ -1552,10 +1556,10 @@ function LogCard({ log, poll, onPollVote, onEdit }) {
                 <StarRating value={log.rating} readOnly size={15}/>
                 <span style={{fontSize:13,color:"#9a7c60"}}>{log.rating}</span>
               </div>
-              <button onClick={()=>onEdit(log)} title="Edit this log"
+              {onEdit&&<button onClick={()=>onEdit(log)} title="Edit this log"
                 style={{background:"none",border:"1px solid #d0c0a8",borderRadius:6,color:"#7a5c40",fontSize:12,padding:"4px 10px",cursor:"pointer",fontFamily:"Georgia,serif"}}>
                 Edit
-              </button>
+              </button>}
             </div>
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8,alignItems:"center"}}>
@@ -1809,6 +1813,157 @@ function AuthScreen({ onAuthed, onSkip }) {
   );
 }
 
+// ─── Readers — visit another user's library ───────────────────────────────────
+// Search a reader by username, then browse their favourites, recent readings
+// and bookshelves — all read-only, reusing the same components as your own views.
+function ReadersView({ connected }) {
+  const [q,setQ]=useState("");
+  const [results,setResults]=useState([]);
+  const [searching,setSearching]=useState(false);
+  const [profile,setProfile]=useState(null);   // {user, logs, favs, shelves}
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState(null);
+  const [subview,setSubview]=useState("overview");   // overview | shelves
+
+  const doSearch=useCallback(debounce(async term=>{
+    if (!term||term.length<2){ setResults([]); return; }
+    setSearching(true);
+    try { setResults(await api.searchUsers(term)); } catch { setResults([]); }
+    finally { setSearching(false); }
+  },350),[]);
+
+  async function openProfile(username) {
+    setLoading(true); setError(null);
+    try {
+      const d=await api.getUser(username);
+      let shelves=(d.shelves||[]).map(normalizeShelf);
+      if (!shelves.length) shelves=[{id:"all",name:"All my books",color:null,isDefault:true,bookIds:[]}];
+      setProfile({ user:d.user, logs:(d.logs||[]).map(normalizeLog), favs:d.favourites||{}, shelves });
+      setSubview("overview");
+    } catch(e){ setError("Could not load this reader: "+e.message); }
+    finally { setLoading(false); }
+  }
+
+  if (!connected) return (
+    <div style={{textAlign:"center",padding:"60px 0"}}>
+      <h2 style={{margin:"0 0 8px",fontSize:22,fontFamily:"Georgia,serif",color:"#1e1208"}}>Readers</h2>
+      <p style={{color:"#9a7c60",fontSize:14}}>Sign in to search other readers and visit their libraries.</p>
+    </div>
+  );
+
+  // ── A reader's profile ──
+  if (profile) {
+    const { user:u, logs, favs, shelves } = profile;
+    const name=u.display_name||u.username;
+    const avg=logs.length?(logs.reduce((s,l)=>s+l.rating,0)/logs.length).toFixed(1):"—";
+    const countries=new Set(logs.map(l=>l.country).filter(Boolean)).size;
+    const favEntries=CONTINENTS.map(c=>[c,favs[c]]).filter(([,b])=>b);
+    return (
+      <div>
+        <button onClick={()=>setProfile(null)}
+          style={{background:"none",border:"none",color:"#c8802a",fontSize:14,cursor:"pointer",fontFamily:"Georgia,serif",padding:0,marginBottom:16}}>
+          ← Back to search
+        </button>
+
+        <div style={{display:"flex",alignItems:"flex-end",gap:20,marginBottom:20,paddingBottom:20,borderBottom:"1px solid #e0d4c4"}}>
+          <div style={{width:68,height:68,borderRadius:"50%",background:"#2E5C4F",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,fontWeight:700,color:"#fff",flexShrink:0}}>{name[0].toUpperCase()}</div>
+          <div style={{flex:1}}>
+            <h1 style={{margin:"0 0 2px",fontSize:22,fontFamily:"Georgia,serif"}}>{name}</h1>
+            <p style={{margin:"0 0 10px",color:"#7a5c40",fontSize:13}}>
+              @{u.username}{u.location?` · ${u.location}`:""}
+            </p>
+            {u.bio&&<p style={{margin:"0 0 10px",color:"#5a3e2b",fontSize:14}}>{u.bio}</p>}
+            <div style={{display:"flex",gap:20}}>
+              {[[logs.length,"Books"],[avg,"Avg rating"],[countries,"Countries"]].map(([n,label])=>(
+                <div key={label} style={{textAlign:"center"}}>
+                  <div style={{fontSize:18,fontWeight:700,color:"#1e1208"}}>{n}</div>
+                  <div style={{fontSize:11,color:"#9a7c60",textTransform:"uppercase",letterSpacing:"0.05em"}}>{label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* sub-tabs: overview / bookshelves */}
+        <div style={{display:"flex",gap:0,marginBottom:20,borderBottom:"1px solid #e0d4c4"}}>
+          {[["overview","Overview"],["shelves","Bookshelves"]].map(([v,label])=>(
+            <button key={v} onClick={()=>setSubview(v)}
+              style={{background:"none",border:"none",padding:"10px 16px",fontSize:14,fontFamily:"Georgia,serif",cursor:"pointer",
+                color:subview===v?"#c8802a":"#9a7c60",borderBottom:subview===v?"2px solid #c8802a":"2px solid transparent",fontWeight:subview===v?600:400}}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {subview==="overview"&&(
+          <>
+            <h2 style={{margin:"0 0 12px",fontSize:18,fontFamily:"Georgia,serif"}}>Favourites by continent</h2>
+            {favEntries.length===0&&<p style={{color:"#9a7c60",fontSize:14,margin:"0 0 24px"}}>{name} hasn't picked any continent favourites yet.</p>}
+            <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:28}}>
+              {favEntries.map(([c,b])=>(
+                <div key={c} style={{width:110,textAlign:"center"}}>
+                  <div style={{display:"flex",justifyContent:"center",marginBottom:6}}>
+                    <BookCover coverId={b.cover_id} title={b.title} size={72}/>
+                  </div>
+                  <ContinentBadge continent={c}/>
+                  <p style={{margin:"5px 0 0",fontSize:12,color:"#3c2a1a",lineHeight:1.3,overflow:"hidden",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>{b.title}</p>
+                </div>
+              ))}
+            </div>
+
+            <h2 style={{margin:"0 0 12px",fontSize:18,fontFamily:"Georgia,serif"}}>Recent readings</h2>
+            {logs.length===0&&<p style={{color:"#9a7c60",fontSize:14}}>{name} hasn't logged any books yet.</p>}
+            <div style={{display:"flex",flexDirection:"column",gap:16}}>
+              {logs.slice(0,6).map(log=>(
+                <LogCard key={log.id} log={log} poll={null} onPollVote={()=>{}}/>
+              ))}
+            </div>
+          </>
+        )}
+
+        {subview==="shelves"&&(
+          <Bookshelf logs={logs} shelves={shelves} readOnly title={`${name}'s bookshelves`}/>
+        )}
+      </div>
+    );
+  }
+
+  // ── Search ──
+  return (
+    <div>
+      <h2 style={{margin:"0 0 6px",fontSize:22,fontFamily:"Georgia,serif",color:"#1e1208"}}>Readers</h2>
+      <p style={{margin:"0 0 16px",color:"#9a7c60",fontSize:14}}>Search a reader to visit their favourites, recent readings and bookshelves.</p>
+      <div style={{position:"relative",marginBottom:16,maxWidth:420}}>
+        <input value={q} onChange={e=>{setQ(e.target.value);doSearch(e.target.value);}}
+          placeholder="Search readers by username…"
+          style={{width:"100%",padding:"10px 14px 10px 38px",border:"1px solid #d0c0a8",borderRadius:8,fontSize:14,background:"#fff",fontFamily:"Georgia,serif",boxSizing:"border-box",outline:"none"}}/>
+        <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:"#b09070",fontSize:16}}>⌕</span>
+      </div>
+      {searching&&<p style={{color:"#9a7c60",fontSize:13}}>Searching…</p>}
+      {loading&&<p style={{color:"#9a7c60",fontSize:13}}>Loading profile…</p>}
+      {error&&<p style={{color:"#c0392b",fontSize:13}}>{error}</p>}
+      {!searching&&q.length>1&&results.length===0&&<p style={{color:"#9a7c60",fontSize:14}}>No readers found for "{q}".</p>}
+      <div style={{display:"flex",flexDirection:"column",gap:8,maxWidth:420}}>
+        {results.map(r=>(
+          <div key={r.username} onClick={()=>openProfile(r.username)}
+            style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:"#fff",border:"1px solid #e0d4c4",borderRadius:8,cursor:"pointer"}}
+            onMouseOver={e=>e.currentTarget.style.background="#f7f1e7"}
+            onMouseOut={e=>e.currentTarget.style.background="#fff"}>
+            <div style={{width:38,height:38,borderRadius:"50%",background:"#2E5C4F",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:"#fff",flexShrink:0}}>
+              {(r.display_name||r.username)[0].toUpperCase()}
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <p style={{margin:0,fontSize:14,fontWeight:600,color:"#1e1208"}}>{r.display_name||r.username}</p>
+              <p style={{margin:"1px 0 0",fontSize:12,color:"#9a7c60"}}>@{r.username}</p>
+            </div>
+            <span style={{fontSize:12,color:"#9a7c60",flexShrink:0}}>{r.books} book{r.books!==1?"s":""}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Root App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [view,setView]=useState("profile");
@@ -2035,7 +2190,7 @@ export default function App() {
     <div style={{minHeight:"100vh",background:"#f7f3ee",fontFamily:"Georgia,serif",color:"#2c1f14"}}>
       <nav style={{background:"#1e1208",borderBottom:"1px solid #3a2518",padding:"0 24px",display:"flex",alignItems:"center",position:"sticky",top:0,zIndex:100}}>
         <span style={{color:"#c8a96e",fontSize:22,fontWeight:700,letterSpacing:"0.08em",marginRight:32,padding:"14px 0"}}>BOOXXED</span>
-        {[["profile","My books"],["shelf","Bookshelf"],["map","Reading map"]].map(([v,label])=>(
+        {[["profile","My books"],["shelf","Bookshelf"],["map","Reading map"],["readers","Readers"]].map(([v,label])=>(
           <button key={v} onClick={()=>setView(v)} style={{background:"none",border:"none",color:view===v?"#c8a96e":"#8a7060",fontSize:14,padding:"16px 14px",cursor:"pointer",borderBottom:view===v?"2px solid #c8a96e":"2px solid transparent",fontFamily:"Georgia,serif"}}>
             {label}
           </button>
@@ -2092,6 +2247,7 @@ export default function App() {
             onDeleteShelf={handleShelfDelete} onSetShelfBooks={handleShelfBooks}/>
         )}
         {view==="map"&&<GlobeView logs={logs} onEditLog={setEditLog}/>}
+        {view==="readers"&&<ReadersView connected={connected}/>}
       </div>
 
       {logModal&&(
