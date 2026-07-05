@@ -528,7 +528,7 @@ function CountryModal({ country, logs, onClose, onEdit }) {
   const continent = COUNTRY_TO_CONTINENT[country];
 
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onMouseDown={e=>{ if(e.target===e.currentTarget) onClose(); }}>
       <div style={{background:"#faf5ef",borderRadius:14,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <div style={{padding:"18px 24px",borderBottom:"1px solid #e0d4c4",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#faf5ef"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -651,7 +651,7 @@ function BookDetailPanel({ log, onClose, onEdit }) {
   }, [log.bookId]);
 
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(20,12,6,0.7)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+    <div style={{position:"fixed",inset:0,background:"rgba(20,12,6,0.7)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onMouseDown={e=>{ if(e.target===e.currentTarget) onClose(); }}>
       <div style={{background:"#faf5ef",borderRadius:14,width:"100%",maxWidth:760,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",gap:28,padding:28,flexWrap:"wrap"}}>
           {/* Big cover, side by side with everything else */}
@@ -733,7 +733,7 @@ function ShelfEditor({ mode, shelf, logs, onClose, onCreate, onUpdate, onDelete,
   }
 
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(20,12,6,0.7)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+    <div style={{position:"fixed",inset:0,background:"rgba(20,12,6,0.7)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onMouseDown={e=>{ if(e.target===e.currentTarget) onClose(); }}>
       <div style={{background:"#faf5ef",borderRadius:14,width:"100%",maxWidth:460,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <div style={{padding:"18px 24px",borderBottom:"1px solid #e0d4c4",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <h2 style={{margin:0,fontSize:18,fontFamily:"Georgia,serif",color:"#1e1208"}}>{isNew?"New shelf":"Customise shelf"}</h2>
@@ -1406,7 +1406,7 @@ function LogModal({ onClose, onSave, polls, onPollVote, onPollCreate, onBookSele
   const poll = selected ? polls[selected.key] : null;
 
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onMouseDown={e=>{ if(e.target===e.currentTarget) onClose(); }}>
       <div style={{background:"#faf5ef",borderRadius:14,width:"100%",maxWidth:520,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <div style={{padding:"18px 24px",borderBottom:"1px solid #e0d4c4",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#faf5ef",zIndex:1}}>
           <div>
@@ -1604,7 +1604,7 @@ function EditLogModal({ log, onClose, onSave, onDelete }) {
   }
 
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onMouseDown={e=>{ if(e.target===e.currentTarget) onClose(); }}>
       <div style={{background:"#faf5ef",borderRadius:14,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <div style={{padding:"18px 24px",borderBottom:"1px solid #e0d4c4",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#faf5ef"}}>
           <h2 style={{margin:0,fontSize:17,fontFamily:"Georgia,serif",color:"#1e1208"}}>Edit log</h2>
