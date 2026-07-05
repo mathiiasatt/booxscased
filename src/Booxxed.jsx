@@ -802,12 +802,20 @@ function Bookshelf({ logs, shelves=[], onCreateShelf, onUpdateShelf, onDeleteShe
   const [activeId,setActiveId]=useState(shelves[0]?.id);
   const [editor,setEditor]=useState(null);        // null | "new" | "edit"
   const [hovered,setHovered]=useState(null);      // {log,x,y} — tooltip after a 1.5s dwell
+  const [posters,setPosters]=useState({});        // {bookId:{left,top}} — user-placed covers, per shelf
   const hoverTimer=useRef(null);
   const wallRef=useRef(null);
 
   const active = shelves.find(s=>s.id===activeId) || shelves[0];
   useEffect(()=>{ if (!shelves.find(s=>s.id===activeId)) setActiveId(shelves[0]?.id); },[shelves]);   // eslint-disable-line
   useEffect(()=>()=>clearTimeout(hoverTimer.current),[]);
+
+  // load the saved poster layout of the active shelf
+  useEffect(()=>{
+    if (!active?.id) return;
+    try { setPosters(JSON.parse(window.localStorage.getItem("booxxed_posters_"+active.id))||{}); }
+    catch { setPosters({}); }
+  },[activeId,shelves.length]);   // eslint-disable-line
 
   // default shelf = every logged book; custom shelves = hand-picked
   const shelfLogs = (!active||active.isDefault) ? logs : logs.filter(l=>active.bookIds.includes(l.bookId));
@@ -847,8 +855,30 @@ function Bookshelf({ logs, shelves=[], onCreateShelf, onUpdateShelf, onDeleteShe
     {left:4,top:78},{left:14,top:84},{left:79,top:83},{left:89,top:76},
   ];
   const covers=shelfLogs.slice(0,SLOTS.length).map((log,i)=>({
-    log, slot:SLOTS[i], rot:((hashOf(log.bookId||log.title)%13)-6),
+    log, slot:posters[log.bookId]||SLOTS[i], rot:((hashOf(log.bookId||log.title)%13)-6),
   }));
+
+  // ── drag a poster to reposition it; layout is saved per shelf ──────────────
+  function posterDown(log, e){
+    if (readOnly) return;
+    e.preventDefault();
+    const wall=wallRef.current.getBoundingClientRect();
+    const el=e.currentTarget.getBoundingClientRect();
+    const offX=e.clientX-el.left, offY=e.clientY-el.top;
+    const bookId=log.bookId, shelfId=active?.id;
+    const move=ev=>{
+      const left=Math.min(Math.max(((ev.clientX-wall.left-offX)/wall.width)*100,0),90);
+      const top =Math.min(Math.max(((ev.clientY-wall.top -offY)/wall.height)*100,0),86);
+      setPosters(p=>({...p,[bookId]:{left,top}}));
+    };
+    const up=()=>{
+      window.removeEventListener("mousemove",move);
+      window.removeEventListener("mouseup",up);
+      setPosters(p=>{ try{ window.localStorage.setItem("booxxed_posters_"+shelfId, JSON.stringify(p)); }catch{} return p; });
+    };
+    window.addEventListener("mousemove",move);
+    window.addEventListener("mouseup",up);
+  }
 
   return (
     <div>
@@ -908,15 +938,17 @@ function Bookshelf({ logs, shelves=[], onCreateShelf, onUpdateShelf, onDeleteShe
       {/* ── The wall: white backdrop, covers pinned around, the bookcase in the middle ── */}
       <div ref={wallRef} style={{position:"relative",minHeight:620,background:"linear-gradient(#ffffff 60%,#f3efe7)",borderRadius:14,border:"1px solid #e4dfd4",overflow:"hidden",padding:"40px 0 48px"}}>
         {covers.map(({log,slot,rot})=>(
-          <div key={log.id} title={log.title}
+          <div key={log.id} title={readOnly?log.title:log.title+" — drag to move"}
+            onMouseDown={e=>posterDown(log,e)}
             style={{position:"absolute",left:slot.left+"%",top:slot.top+"%",transform:`rotate(${rot}deg)`,
-              boxShadow:"0 5px 14px rgba(0,0,0,0.20)",borderRadius:6,background:"#fff",padding:3}}>
+              boxShadow:"0 5px 14px rgba(0,0,0,0.20)",borderRadius:6,background:"#fff",padding:3,
+              cursor:readOnly?"default":"grab",zIndex:5,userSelect:"none"}}>
             <BookCover coverId={log.coverId} title={log.title} size={60}/>
           </div>
         ))}
 
         {/* the bookcase */}
-        <div style={{position:"relative",width:480,maxWidth:"86%",margin:"0 auto",background:woodColor,borderRadius:12,
+        <div style={{position:"relative",width:400,maxWidth:"78%",margin:"0 auto",background:woodColor,borderRadius:12,
           padding:"18px 16px 14px",boxShadow:"0 22px 48px rgba(0,0,0,0.28)",border:"1px solid rgba(0,0,0,0.18)"}}>
           {rows.map((row,ri)=>(
             <div key={ri} style={{background:"rgba(20,12,6,0.42)",borderRadius:5,marginTop:ri?12:0,
@@ -989,7 +1021,7 @@ function Bookshelf({ logs, shelves=[], onCreateShelf, onUpdateShelf, onDeleteShe
         })}
       </div>
       <p style={{margin:"8px 0 0",fontSize:12,color:"#9a7c60",textAlign:"center"}}>
-        Hover a spine to see the book · click it for the full page · spine colour = continent
+        Hover a spine to see the book · click it for the full page · {readOnly?"":"drag the covers to decorate your wall · "}spine colour = continent
       </p>
     </div>
   );
