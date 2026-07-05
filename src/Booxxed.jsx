@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import * as THREE from "three";   // npm install three  (in booxxed-frontend)
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const CONTINENTS = ["Africa","Americas","Asia","Europe","Oceania"];
@@ -800,14 +799,15 @@ function ShelfEditor({ mode, shelf, logs, onClose, onCreate, onUpdate, onDelete,
 function Bookshelf({ logs, shelves=[], onCreateShelf, onUpdateShelf, onDeleteShelf, onSetShelfBooks, onEditLog, readOnly=false, title="My bookshelves" }) {
   const [selected,setSelected]=useState(null);
   const [sortBy,setSortBy]=useState("recent");
-  const [webglError,setWebglError]=useState(false);
   const [activeId,setActiveId]=useState(shelves[0]?.id);
   const [editor,setEditor]=useState(null);        // null | "new" | "edit"
-  const mountRef=useRef(null);
-  const S=useRef(null);   // three.js scene state (renderer, meshes, targets...)
+  const [hovered,setHovered]=useState(null);      // {log,x,y} — tooltip after a 1.5s dwell
+  const hoverTimer=useRef(null);
+  const wallRef=useRef(null);
 
   const active = shelves.find(s=>s.id===activeId) || shelves[0];
   useEffect(()=>{ if (!shelves.find(s=>s.id===activeId)) setActiveId(shelves[0]?.id); },[shelves]);   // eslint-disable-line
+  useEffect(()=>()=>clearTimeout(hoverTimer.current),[]);
 
   // default shelf = every logged book; custom shelves = hand-picked
   const shelfLogs = (!active||active.isDefault) ? logs : logs.filter(l=>active.bookIds.includes(l.bookId));
@@ -821,256 +821,40 @@ function Bookshelf({ logs, shelves=[], onCreateShelf, onUpdateShelf, onDeleteShe
     return (b.date||"").localeCompare(a.date||"");
   });
 
-  // ── procedural textures ──────────────────────────────────────────────
   function hashOf(str){ let h=0; for(let i=0;i<str.length;i++) h=(h*31+str.charCodeAt(i))>>>0; return h; }
   function hueOf(log){ return SPINE_HUES[log.continent]||[30,14]; }
 
-  function spineTexture(log){
-    const [hue,sat]=hueOf(log);
-    const h=hashOf(log.bookId||log.title); const light=26+(h%16);
-    const c=document.createElement("canvas"); c.width=128; c.height=512;
-    const x=c.getContext("2d");
-    x.fillStyle=`hsl(${hue},${sat}%,${light}%)`; x.fillRect(0,0,128,512);
-    // side shading for depth
-    const g=x.createLinearGradient(0,0,128,0);
-    g.addColorStop(0,"rgba(255,255,255,0.10)"); g.addColorStop(0.5,"rgba(0,0,0,0)"); g.addColorStop(1,"rgba(0,0,0,0.25)");
-    x.fillStyle=g; x.fillRect(0,0,128,512);
-    const accent=`hsl(${hue},${Math.min(sat+15,60)}%,${Math.min(light+38,80)}%)`;
-    x.fillStyle=accent; x.fillRect(20,26,88,5); x.fillRect(20,481,88,5);
-    if (log.rating>=4){ x.fillStyle="#f0c040"; x.beginPath(); x.arc(64,52,7,0,Math.PI*2); x.fill(); }
-    x.save(); x.translate(64,266); x.rotate(Math.PI/2);
-    x.fillStyle=accent; x.font="600 34px Georgia,serif"; x.textAlign="center"; x.textBaseline="middle";
-    let t=log.title; while (x.measureText(t).width>380 && t.length>3) t=t.slice(0,-2);
-    if (t!==log.title) t+="…";
-    x.fillText(t,0,0); x.restore();
-    const tex=new THREE.CanvasTexture(c);
-    if (THREE.SRGBColorSpace!==undefined) tex.colorSpace=THREE.SRGBColorSpace;
-    return tex;
+  // ── hover: show title / author / year after 1.5s without clicking ──────────
+  function spineEnter(log, e){
+    clearTimeout(hoverTimer.current);
+    const r=e.currentTarget.getBoundingClientRect();
+    const wall=wallRef.current.getBoundingClientRect();
+    const x=r.left-wall.left+r.width/2;
+    const y=r.top-wall.top;
+    hoverTimer.current=setTimeout(()=>setHovered({log,x,y}), 1500);
   }
+  function spineLeave(){ clearTimeout(hoverTimer.current); setHovered(null); }
 
-  function coverFallbackTexture(log){
-    const [hue,sat]=hueOf(log);
-    const h=hashOf(log.bookId||log.title); const light=22+(h%12);
-    const c=document.createElement("canvas"); c.width=512; c.height=768;
-    const x=c.getContext("2d");
-    x.fillStyle=`hsl(${hue},${sat}%,${light}%)`; x.fillRect(0,0,512,768);
-    x.strokeStyle=`hsl(${hue},${Math.min(sat+15,60)}%,${Math.min(light+40,82)}%)`;
-    x.lineWidth=6; x.strokeRect(28,28,456,712);
-    x.fillStyle=`hsl(${hue},${Math.min(sat+10,55)}%,${Math.min(light+48,88)}%)`;
-    x.font="700 44px Georgia,serif"; x.textAlign="center";
-    const words=(log.title||"?").split(" "); let line="",y=210;
-    for (const w of words){
-      if (x.measureText(line+" "+w).width>420){ x.fillText(line.trim(),256,y); line=w; y+=56; if(y>560)break; }
-      else line+=" "+w;
-    }
-    if (y<=560) x.fillText(line.trim(),256,y);
-    x.font="italic 30px Georgia,serif"; x.fillText(log.author||"",256,660);
-    const tex=new THREE.CanvasTexture(c);
-    if (THREE.SRGBColorSpace!==undefined) tex.colorSpace=THREE.SRGBColorSpace;
-    return tex;
-  }
+  // spines are laid out in rows on the bookcase
+  const PER_ROW=9;
+  const rows=[]; for (let i=0;i<sorted.length;i+=PER_ROW) rows.push(sorted.slice(i,i+PER_ROW));
+  while (rows.length<3) rows.push([]);          // the case always shows at least 3 boards
 
-  // ── scene bootstrap (once) ────────────────────────────────────────
-  useEffect(()=>{
-    const mount=mountRef.current;
-    if (!mount) return;
-    let renderer;
-    try { renderer=new THREE.WebGLRenderer({antialias:true}); }
-    catch(e){ setWebglError(true); return; }
-
-    const W=mount.clientWidth||860, H=520;
-    renderer.setSize(W,H);
-    renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1));
-    mount.appendChild(renderer.domElement);
-
-    const scene=new THREE.Scene();
-    scene.background=new THREE.Color("#5c452e");
-    scene.fog=new THREE.Fog("#5c452e",10,22);
-
-    const camera=new THREE.PerspectiveCamera(45,W/H,0.1,60);
-    camera.position.set(0,2.0,8.2);
-
-    // warm, bright library lighting
-    scene.add(new THREE.AmbientLight(0xfff0dc,1.0));
-    const spot=new THREE.SpotLight(0xffd9a8,1.5,30,Math.PI/3.2,0.4);
-    spot.position.set(0,7.5,7); scene.add(spot); scene.add(spot.target);
-    const fill=new THREE.PointLight(0xffc890,0.6,20); fill.position.set(-4,2.5,4); scene.add(fill);
-
-    // room: back wall + floor + side panels
-    const wallMat=new THREE.MeshStandardMaterial({color:"#8a6a48",roughness:0.95});
-    const back=new THREE.Mesh(new THREE.PlaneGeometry(26,14),wallMat); back.position.set(0,3.5,-1.35); scene.add(back);
-    const floor=new THREE.Mesh(new THREE.PlaneGeometry(26,20),new THREE.MeshStandardMaterial({color:"#6e5236",roughness:1}));
-    floor.rotation.x=-Math.PI/2; floor.position.y=-1.6; scene.add(floor);
-    for (const sx of [-5.4,5.4]) {
-      const side=new THREE.Mesh(new THREE.BoxGeometry(0.35,11,2.6),new THREE.MeshStandardMaterial({color:"#96703f",roughness:0.9}));
-      side.position.set(sx,2.6,-0.1); scene.add(side);
-    }
-
-    S.current={ renderer, scene, camera, mount,
-      books:new Map(), boards:[], raycaster:new THREE.Raycaster(),
-      mouse:new THREE.Vector2(-10,-10), parallax:{x:0,y:0},
-      hoverId:null, selectedId:null, raf:null, t:0 };
-
-    // ── interactions ──
-    const el=renderer.domElement;
-    el.style.cursor="default";
-    const toNDC=(e)=>{
-      const r=el.getBoundingClientRect();
-      S.current.mouse.set(((e.clientX-r.left)/r.width)*2-1, -((e.clientY-r.top)/r.height)*2+1);
-      S.current.parallax={x:S.current.mouse.x, y:S.current.mouse.y};
-    };
-    const pick=()=>{
-      const st=S.current;
-      st.raycaster.setFromCamera(st.mouse,st.camera);
-      const hit=st.raycaster.intersectObjects([...st.books.values()],false)[0];
-      return hit?hit.object:null;
-    };
-    const onMove=(e)=>{ toNDC(e);
-      const m=pick(); const st=S.current;
-      const id=m?m.userData.log.id:null;
-      if (id!==st.hoverId){ st.hoverId=id; el.style.cursor=id?"pointer":"default"; }
-    };
-    const onClick=(e)=>{ toNDC(e);
-      const m=pick(); if(!m) return;
-      selectBook(m.userData.log);
-    };
-    const onWheel=(e)=>{ e.preventDefault();
-      const c=S.current.camera;
-      c.position.z=Math.max(4.6,Math.min(11,c.position.z+(e.deltaY>0?0.5:-0.5)));
-    };
-    el.addEventListener("mousemove",onMove);
-    el.addEventListener("click",onClick);
-    el.addEventListener("wheel",onWheel,{passive:false});
-
-    const onResize=()=>{
-      const w=mount.clientWidth||W;
-      camera.aspect=w/H; camera.updateProjectionMatrix(); renderer.setSize(w,H);
-    };
-    window.addEventListener("resize",onResize);
-
-    // ── render loop: lerp to targets, idle sway ──
-    const loop=()=>{
-      const st=S.current; if(!st) return;
-      st.t+=0.016;
-      for (const mesh of st.books.values()){
-        const tgt=mesh.userData.target;
-        mesh.position.lerp(tgt.pos,0.12);
-        mesh.rotation.y+=(tgt.rotY-mesh.rotation.y)*0.12;
-        const lift=(st.hoverId===mesh.userData.log.id && st.selectedId!==mesh.userData.log.id)?0.12:0;
-        mesh.position.y+=((tgt.pos.y+lift)-mesh.position.y)*0.2;
-      }
-      // parallax + gentle idle sway = the "alive" part
-      const p=st.parallax;
-      st.camera.position.x+=((p.x*0.9+Math.sin(st.t*0.4)*0.06)-st.camera.position.x)*0.05;
-      st.camera.position.y+=((2.0+p.y*0.45+Math.cos(st.t*0.3)*0.04)-st.camera.position.y)*0.05;
-      st.camera.lookAt(0,1.9,0);
-      st.renderer.render(st.scene,st.camera);
-      st.raf=requestAnimationFrame(loop);
-    };
-    loop();
-
-    return ()=>{
-      const st=S.current;
-      cancelAnimationFrame(st.raf);
-      el.removeEventListener("mousemove",onMove);
-      el.removeEventListener("click",onClick);
-      el.removeEventListener("wheel",onWheel);
-      window.removeEventListener("resize",onResize);
-      st.renderer.dispose();
-      if (st.renderer.domElement.parentNode) st.renderer.domElement.parentNode.removeChild(st.renderer.domElement);
-      S.current=null;
-    };
-  },[]);
-
-  // ── book meshes: sync with logs + sort, then layout targets ──────────────
-  useEffect(()=>{
-    const st=S.current; if(!st) return;
-
-    // create missing meshes
-    for (const log of shelfLogs){
-      if (st.books.has(log.id)) continue;
-      const h=hashOf(log.bookId||log.title);
-      const height=1.45+(h%46)/100, thick=0.26+(h%15)/100, depth=1.02;
-      const pages=new THREE.MeshStandardMaterial({color:"#e6d9c2",roughness:0.9});
-      const dark =new THREE.MeshStandardMaterial({color:"#241609",roughness:0.9});
-      const coverMat=new THREE.MeshStandardMaterial({map:coverFallbackTexture(log),roughness:0.6});
-      const spineMat=new THREE.MeshStandardMaterial({map:spineTexture(log),roughness:0.62});
-      // order: +x(front cover) -x(back) +y -y +z(spine) -z
-      const mesh=new THREE.Mesh(new THREE.BoxGeometry(thick,height,depth),
-        [coverMat,dark,pages,dark,spineMat,dark]);
-      mesh.userData={log, target:{pos:new THREE.Vector3(0,0,0), rotY:0}, height};
-      st.scene.add(mesh);
-      st.books.set(log.id,mesh);
-      // try real Open Library cover (CORS permitting); fallback stays otherwise
-      if (log.coverId){
-        const loader=new THREE.TextureLoader(); loader.setCrossOrigin("anonymous");
-        loader.load(`https://covers.openlibrary.org/b/id/${log.coverId}-L.jpg`,
-          tex=>{ if (THREE.SRGBColorSpace!==undefined) tex.colorSpace=THREE.SRGBColorSpace;
-                 coverMat.map=tex; coverMat.needsUpdate=true; },
-          undefined, ()=>{});
-      }
-    }
-    // remove books that left this shelf (or were deleted)
-    for (const [id,mesh] of st.books){
-      if (!shelfLogs.find(l=>l.id===id)){ st.scene.remove(mesh); st.books.delete(id); }
-    }
-
-    // layout: rows of accumulated spine thickness, centred
-    const ROW_W=8.6, ROW_Y0=3.1, ROW_DY=2.35;
-    const rows=[]; let row=[], acc=0;
-    for (const log of sorted){
-      const mesh=st.books.get(log.id); if(!mesh) continue;
-      const w=mesh.geometry.parameters.width+0.06;
-      if (acc+w>ROW_W && row.length){ rows.push(row); row=[]; acc=0; }
-      row.push(mesh); acc+=w;
-    }
-    if (row.length) rows.push(row);
-
-    rows.forEach((r,ri)=>{
-      const total=r.reduce((s,m)=>s+m.geometry.parameters.width+0.06,0);
-      let cx=-total/2;
-      const boardY=ROW_Y0-ri*ROW_DY;
-      for (const mesh of r){
-        const w=mesh.geometry.parameters.width;
-        const keepOut = st.selectedId===mesh.userData.log.id;
-        mesh.userData.target.pos.set(cx+w/2, boardY+mesh.userData.height/2+0.06, keepOut?2.6:0);
-        mesh.userData.target.rotY = keepOut?-Math.PI/2:0;
-        cx+=w+0.06;
-      }
-    });
-
-    // shelf boards to match row count
-    for (const b of st.boards) st.scene.remove(b);
-    st.boards=rows.map((_,ri)=>{
-      const b=new THREE.Mesh(new THREE.BoxGeometry(10.4,0.14,1.5),
-        new THREE.MeshStandardMaterial({color:woodColor,roughness:0.75}));
-      b.position.set(0,ROW_Y0-ri*ROW_DY,0);
-      st.scene.add(b); return b;
-    });
-  },[logs,sortBy,activeId,shelves]);   // re-layout on book/sort/shelf change (books glide to new slots)
-
-  // ── select / put back ──
-  function selectBook(log){
-    const st=S.current; if(!st) return;
-    if (st.selectedId===log.id){ putBack(); return; }
-    putBack();                       // return any previously pulled book
-    st.selectedId=log.id;
-    const mesh=st.books.get(log.id);
-    if (mesh){ mesh.userData.target.pos.z=2.6; mesh.userData.target.rotY=-Math.PI/2; }
-    setTimeout(()=>setSelected(log),420);   // let the pull animation play first
-  }
-  function putBack(){
-    const st=S.current; if(!st||!st.selectedId) return;
-    const mesh=st.books.get(st.selectedId);
-    if (mesh){ mesh.userData.target.pos.z=0; mesh.userData.target.rotY=0; }
-    st.selectedId=null;
-  }
+  // covers pinned on the wall around the bookcase
+  const SLOTS=[
+    {left:4,top:4},{left:13,top:14},{left:86,top:5},{left:78,top:15},
+    {left:3,top:32},{left:90,top:30},{left:5,top:55},{left:89,top:54},
+    {left:4,top:78},{left:14,top:84},{left:79,top:83},{left:89,top:76},
+  ];
+  const covers=shelfLogs.slice(0,SLOTS.length).map((log,i)=>({
+    log, slot:SLOTS[i], rot:((hashOf(log.bookId||log.title)%13)-6),
+  }));
 
   return (
     <div>
       {selected&&<BookDetailPanel log={selected}
-        onClose={()=>{ setSelected(null); putBack(); }}
-        onEdit={onEditLog?(l)=>{ setSelected(null); putBack(); onEditLog(l); }:null}/>}
+        onClose={()=>setSelected(null)}
+        onEdit={onEditLog?(l)=>{ setSelected(null); onEditLog(l); }:null}/>}
 
       {editor&&(
         <ShelfEditor mode={editor} shelf={active} logs={logs}
@@ -1121,19 +905,76 @@ function Bookshelf({ logs, shelves=[], onCreateShelf, onUpdateShelf, onDeleteShe
         )}
       </div>
 
-      {webglError&&(
-        <p style={{color:"#c0392b",textAlign:"center",padding:"40px 0"}}>WebGL is unavailable in this browser — the 3D shelf can't render here.</p>
-      )}
+      {/* ── The wall: white backdrop, covers pinned around, the bookcase in the middle ── */}
+      <div ref={wallRef} style={{position:"relative",minHeight:620,background:"linear-gradient(#ffffff 60%,#f3efe7)",borderRadius:14,border:"1px solid #e4dfd4",overflow:"hidden",padding:"40px 0 48px"}}>
+        {covers.map(({log,slot,rot})=>(
+          <div key={log.id} title={log.title}
+            style={{position:"absolute",left:slot.left+"%",top:slot.top+"%",transform:`rotate(${rot}deg)`,
+              boxShadow:"0 5px 14px rgba(0,0,0,0.20)",borderRadius:6,background:"#fff",padding:3}}>
+            <BookCover coverId={log.coverId} title={log.title} size={60}/>
+          </div>
+        ))}
 
-      <div ref={mountRef} style={{width:"100%",borderRadius:14,overflow:"hidden",border:"1px solid #b89468",minHeight:520,background:"#5c452e"}}/>
+        {/* the bookcase */}
+        <div style={{position:"relative",width:480,maxWidth:"86%",margin:"0 auto",background:woodColor,borderRadius:12,
+          padding:"18px 16px 14px",boxShadow:"0 22px 48px rgba(0,0,0,0.28)",border:"1px solid rgba(0,0,0,0.18)"}}>
+          {rows.map((row,ri)=>(
+            <div key={ri} style={{background:"rgba(20,12,6,0.42)",borderRadius:5,marginTop:ri?12:0,
+              padding:"10px 10px 0",display:"flex",alignItems:"flex-end",gap:4,minHeight:132,
+              borderBottom:"8px solid rgba(255,255,255,0.22)"}}>
+              {row.map(log=>{
+                const [hue,sat]=hueOf(log);
+                const h=hashOf(log.bookId||log.title);
+                const light=26+(h%16);
+                const accent=`hsl(${hue},${Math.min(sat+15,60)}%,${Math.min(light+38,80)}%)`;
+                return (
+                  <button key={log.id}
+                    onClick={()=>{ spineLeave(); setSelected(log); }}
+                    onMouseEnter={e=>spineEnter(log,e)}
+                    onMouseLeave={spineLeave}
+                    style={{position:"relative",width:26+(h%12),height:96+(h%34),flexShrink:0,cursor:"pointer",
+                      background:`linear-gradient(90deg, hsl(${hue},${sat}%,${light+6}%), hsl(${hue},${sat}%,${light}%) 45%, hsl(${hue},${sat}%,${Math.max(light-8,8)}%))`,
+                      border:"none",borderRadius:"3px 3px 0 0",padding:0,
+                      boxShadow:"inset 0 2px 0 rgba(255,255,255,0.15)",
+                      display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-between"}}>
+                    {log.rating>=4
+                      ? <span style={{width:8,height:8,borderRadius:"50%",background:"#f0c040",marginTop:8,flexShrink:0}}/>
+                      : <span style={{height:8,marginTop:8}}/>}
+                    <span style={{writingMode:"vertical-rl",fontSize:10,fontWeight:600,color:accent,fontFamily:"Georgia,serif",
+                      maxHeight:"70%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",lineHeight:1}}>
+                      {log.title}
+                    </span>
+                    <span style={{width:"66%",height:3,background:accent,marginBottom:7,borderRadius:2,flexShrink:0}}/>
+                  </button>
+                );
+              })}
+              {row.length===0&&<span style={{fontSize:11,color:"rgba(255,255,255,0.45)",margin:"0 auto 10px",fontStyle:"italic"}}>empty board</span>}
+            </div>
+          ))}
+        </div>
 
-      {shelfLogs.length===0&&!webglError&&(
+        <p style={{margin:"18px 0 0",fontSize:14,color:"#7a5c40",fontWeight:600,textAlign:"center"}}>
+          {active?active.name:"My shelf"} · {shelfLogs.length} book{shelfLogs.length!==1?"s":""}
+        </p>
+
+        {/* dwell tooltip: title / author / year */}
+        {hovered&&(
+          <div style={{position:"absolute",left:Math.min(Math.max(hovered.x,110),(wallRef.current?.clientWidth||600)-110),top:Math.max(hovered.y-64,8),transform:"translateX(-50%)",
+            background:"rgba(30,18,8,0.94)",color:"#f5ecd8",padding:"8px 12px",borderRadius:8,border:"1px solid #c8a96e",
+            pointerEvents:"none",zIndex:20,whiteSpace:"nowrap",textAlign:"center",boxShadow:"0 6px 16px rgba(0,0,0,0.3)"}}>
+            <p style={{margin:0,fontSize:13,fontWeight:700,fontFamily:"Georgia,serif"}}>{hovered.log.title}</p>
+            <p style={{margin:"2px 0 0",fontSize:12,color:"#c8a96e"}}>{hovered.log.author}{hovered.log.year?` · ${hovered.log.year}`:""}</p>
+          </div>
+        )}
+      </div>
+
+      {shelfLogs.length===0&&(
         <p style={{color:"#9a7c60",textAlign:"center",margin:"14px 0 0"}}>
           {readOnly
             ? <>This shelf is empty.</>
             : active&&!active.isDefault
               ? <>This shelf is empty — click <b>✎ Customise</b> to place some of your books on it.</>
-              : <>Your shelves are empty — log a book to place it in the closet.</>}
+              : <>Your shelves are empty — log a book to place it on the shelf.</>}
         </p>
       )}
 
@@ -1148,7 +989,7 @@ function Bookshelf({ logs, shelves=[], onCreateShelf, onUpdateShelf, onDeleteShe
         })}
       </div>
       <p style={{margin:"8px 0 0",fontSize:12,color:"#9a7c60",textAlign:"center"}}>
-        Move the mouse to look around · scroll to step closer · click a spine to pull the book out · spine colour = continent
+        Hover a spine to see the book · click it for the full page · spine colour = continent
       </p>
     </div>
   );
